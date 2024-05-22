@@ -1,6 +1,7 @@
 streamlit
-python-dotenv
-requests
-google-generativeai
-hydralit
 replicate
+Pillow
+python-dotenv
+azure-storage-blob
+pandas
+hydralit

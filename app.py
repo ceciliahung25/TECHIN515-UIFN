@@ -11,6 +11,7 @@ from azure.storage.blob import BlobServiceClient
 import pandas as pd
 import json
 from datetime import datetime
+import os  # Add this line to import the os module
 
 # Load environment variables
 load_dotenv()
@@ -20,13 +21,9 @@ STORAGE_ACCOUNT_NAME = os.getenv('STORAGE_ACCOUNT_NAME')  # Read from environmen
 STORAGE_ACCOUNT_KEY = os.getenv('STORAGE_ACCOUNT_KEY')    # Read from environment variable
 CONTAINER_NAME = 'cloud'  # Assuming 'cloud' is the container name
 
-# Animal emojis mapping
-animal_emojis = {
-    "dog": "🐕", "bird": "🐦", "cat": "🐈", "elephant": "🐘", "fish": "🐟",
-    "fox": "🦊", "horse": "🐎", "lion": "🦁", "monkey": "🐒", "mouse": "🐁",
-    "owl": "🦉", "panda": "🐼", "rabbit": "🐇", "snake": "🐍", "tiger": "🐅",
-    "unicorn": "🦄", "dragon": "🐉", "swan": "🦢", "cow": "🐄", "bear": "🐻"
-}
+# Rest of your code remains unchanged
+
+# Define your functions and classes below
 
 def get_blob_service_client(account_name, account_key):
     return BlobServiceClient(
@@ -241,3 +238,4 @@ if __name__ == "__main__":
     app.add_app("Cloud Riddle", icon="☁️", app=CloudRiddleApp())
     app.add_app("Time-Lapse", icon="⏳", app=TimeLapseApp())
     app.run()
+
