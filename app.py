@@ -1,5 +1,6 @@
 import replicate
 import streamlit as st
+import streamlit.components.v1 as components
 from PIL import Image
 import io
 import base64
@@ -12,6 +13,7 @@ import pandas as pd
 import json
 from datetime import datetime
 import os  # Add this line to import the os module
+import pytz  # This module helps with timezone conversions
 
 # Load environment variables
 load_dotenv()
@@ -21,10 +23,25 @@ STORAGE_ACCOUNT_NAME = os.getenv('STORAGE_ACCOUNT_NAME')  # Read from environmen
 STORAGE_ACCOUNT_KEY = os.getenv('STORAGE_ACCOUNT_KEY')    # Read from environment variable
 CONTAINER_NAME = 'cloud'  # Assuming 'cloud' is the container name
 
-# Rest of your code remains unchanged
+# Animal emojis mapping
+animal_emojis = {
+    "dog": "🐕", "bird": "🐦", "cat": "🐈", "elephant": "🐘", "fish": "🐟",
+    "fox": "🦊", "horse": "🐎", "lion": "🦁", "monkey": "🐒", "mouse": "🐁",
+    "owl": "🦉", "panda": "🐼", "rabbit": "🐇", "snake": "🐍", "tiger": "🐅",
+    "unicorn": "🦄", "dragon": "🐉", "swan": "🦢", "cow": "🐄", "bear": "🐻"
+}
+
+# Function to inject JavaScript for getting the screen width
+def get_screen_width():
+    js = """
+    <script>
+    const width = window.innerWidth;
+    window.parent.postMessage({type: 'streamlit:setComponentValue', value: width}, '*');
+    </script>
+    """
+    components.html(js, height=0, width=0)
 
 # Define your functions and classes below
-
 def get_blob_service_client(account_name, account_key):
     return BlobServiceClient(
         account_url=f"https://{account_name}.blob.core.windows.net",
@@ -91,7 +108,7 @@ def submit_analysis(image):
         return
     input_data = {
         "image": image_url,
-        "prompt": "What are the top 5 animals this cloud looks like, with confidence scores in percentage? please only give me the top 5 animals and their confidence scores in percentage.No other description!",
+        "prompt": "What are the top 5 animals this cloud looks like, with confidence scores in percentage? Please only give me the top 5 animals and their confidence scores in percentage. No other description!",
     }
     try:
         output_generator = replicate.run(
@@ -205,28 +222,66 @@ class TimeLapseApp(HydraHeadApp):
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
         st.title("Time-Lapse Photography")
 
-        latest_images = get_latest_blob_names(
-            STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY, CONTAINER_NAME, 'photo_', count=9
-        )
-        cols = st.columns(3)
-        for index, image_name in enumerate(latest_images):
-            col = cols[index % 3]
-            with col:
-                image = get_image_from_blob(
-                    STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY, CONTAINER_NAME, image_name
-                )
-                st.image(image, caption=f'Image {index+1}', width=100)
-                if st.button(f"View Details {index+1}", key=image_name):
-                    self.show_image_details(STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY, CONTAINER_NAME, image_name)
+        # Call to set the screen width in session state
+        get_screen_width()
 
-    def show_image_details(self, account_name, account_key, container_name, blob_name):
-        metadata = get_blob_metadata(account_name, account_key, container_name, blob_name)
-        image = get_image_from_blob(account_name, account_key, container_name, blob_name)
-        st.image(image, caption="Detailed View", use_column_width=True)
-        st.write(f"Time Taken: {metadata['time_taken']}")
-        st.write(f"Location: {metadata['location']}")
-        if st.button("Back to album"):
-            st.experimental_rerun()
+        # Check if image details are being shown
+        if "show_details" not in st.session_state:
+            st.session_state["show_details"] = False
+            st.session_state["selected_image"] = None
+
+        if not st.session_state["show_details"]:
+            # Fetch the latest images
+            latest_images = get_latest_blob_names(
+                STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY, CONTAINER_NAME, 'photo_', count=9
+            )
+
+            # Determine the number of columns based on the screen width
+            if st.session_state.get("screen_width", 800) < 800:
+                cols_per_row = 2
+            else:
+                cols_per_row = 3
+
+            cols = st.columns(cols_per_row)
+            for index, image_name in enumerate(latest_images):
+                col = cols[index % cols_per_row]
+                with col:
+                    image = get_image_from_blob(
+                        STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY, CONTAINER_NAME, image_name
+                    )
+                    st.image(image, caption=f'Image {index+1}', width=100)
+                    if st.button(f"View Details {index+1}", key=f'detail-{index+1}'):
+                        st.session_state["selected_image"] = image_name
+                        st.session_state["show_details"] = True
+                        st.experimental_rerun()
+        else:
+            image_name = st.session_state["selected_image"]
+            metadata = get_blob_metadata(STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY, CONTAINER_NAME, image_name)
+            image = get_image_from_blob(STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY, CONTAINER_NAME, image_name)
+            st.image(image, caption="Detailed View", use_column_width=True)
+            
+            # Use the new function to get the date and time from the filename
+            date_time_taken = extract_datetime_from_filename(image_name)
+            st.write(f"Time Taken: {date_time_taken}")
+            
+            if st.button("Back to album"):
+                st.session_state["show_details"] = False
+                st.session_state["selected_image"] = None
+                st.experimental_rerun()
+
+def extract_datetime_from_filename(filename):
+    # Extract the timestamp part from the filename which seems to be in 'yyyyMMdd' or 'yyyyMMdd_HHmmss' format
+    timestamp_str = filename.split('_')[1].split('.')[0]
+
+    try:
+        # Try to parse with time information first
+        dt = datetime.strptime(timestamp_str, '%Y%m%d%H%M%S')
+    except ValueError:
+        # If fails, try to parse without time information
+        dt = datetime.strptime(timestamp_str, '%Y%m%d')
+
+    # Convert to a more readable format
+    return dt.strftime('%Y-%m-%d %H:%M:%S') if 'H' in dt.strftime('%Y-%m-%d %H:%M:%S') else dt.strftime('%Y-%m-%d')
 
 if __name__ == "__main__":
     app = HydraApp(
@@ -238,4 +293,3 @@ if __name__ == "__main__":
     app.add_app("Cloud Riddle", icon="☁️", app=CloudRiddleApp())
     app.add_app("Time-Lapse", icon="⏳", app=TimeLapseApp())
     app.run()
-
