@@ -14,6 +14,7 @@ import json
 from datetime import datetime
 import os  # Add this line to import the os module
 import pytz  # This module helps with timezone conversions
+import imageio  # Add this line to import the imageio library
 
 # Load environment variables
 load_dotenv()
@@ -233,15 +234,43 @@ class TimeLapseApp(HydraHeadApp):
         if not st.session_state["show_details"]:
             # Fetch the latest images
             latest_images = get_latest_blob_names(
-                STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY, CONTAINER_NAME, 'photo_', count=9
+                STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY, CONTAINER_NAME, 'photo_', count=10
             )
 
-            # Determine the number of columns based on the screen width
-            if st.session_state.get("screen_width", 800) < 800:
-                cols_per_row = 2
-            else:
-                cols_per_row = 3
+            # Create a temporary directory if it doesn't exist
+            temp_dir = "tempDir"
+            if not os.path.exists(temp_dir):
+                os.makedirs(temp_dir)
 
+            # Save the images to the temporary directory
+            image_paths = []
+            for image_name in latest_images:
+                image = get_image_from_blob(
+                    STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY, CONTAINER_NAME, image_name
+                )
+                image_path = os.path.join(temp_dir, image_name)
+                image.save(image_path)
+                image_paths.append(image_path)
+
+            # Create and display the GIF
+            if len(image_paths) > 1:
+                output_gif_path = os.path.join(temp_dir, "time_lapse.gif")
+                create_gif(image_paths, output_gif_path, duration=1.0)
+                
+                # Encode GIF to base64
+                with open(output_gif_path, "rb") as f:
+                    gif_data = f.read()
+                b64_gif = base64.b64encode(gif_data).decode("utf-8")
+                
+                st.markdown(
+                    f'<img src="data:image/gif;base64,{b64_gif}" alt="time-lapse gif" width="800">',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.error("Not enough images to create a GIF")
+
+            # Display the static images
+            cols_per_row = 3 if st.session_state.get("screen_width", 800) >= 800 else 2
             cols = st.columns(cols_per_row)
             for index, image_name in enumerate(latest_images):
                 col = cols[index % cols_per_row]
@@ -283,6 +312,14 @@ def extract_datetime_from_filename(filename):
     # Convert to a more readable format
     return dt.strftime('%Y-%m-%d %H:%M:%S') if 'H' in dt.strftime('%Y-%m-%d %H:%M:%S') else dt.strftime('%Y-%m-%d')
 
+def create_gif(image_list, output_path, duration=0.5):
+    images = []
+    for img_path in image_list:
+        with Image.open(img_path) as img:
+            images.append(img.copy())  # Ensure the image is fully loaded
+    imageio.mimsave(output_path, images, duration=duration, loop=0)  # Set loop to 0 for infinite loop
+
+# Ensure the remaining part of your app initialization remains the same
 if __name__ == "__main__":
     app = HydraApp(
         title="Cloud Riddle and Time-Lapse",
