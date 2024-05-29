@@ -12,17 +12,18 @@ from azure.storage.blob import BlobServiceClient
 import pandas as pd
 import json
 from datetime import datetime
-import os  # Add this line to import the os module
-import pytz  # This module helps with timezone conversions
-import imageio  # Add this line to import the imageio library
+import os
+import pytz
+import imageio
+import glob
 
 ### Load environment variables
 load_dotenv()
 
 # Azure Blob Storage credentials
-STORAGE_ACCOUNT_NAME = os.getenv('STORAGE_ACCOUNT_NAME')  # Read from environment variable
-STORAGE_ACCOUNT_KEY = os.getenv('STORAGE_ACCOUNT_KEY')    # Read from environment variable
-CONTAINER_NAME = 'cloud'  # Assuming 'cloud' is the container name
+STORAGE_ACCOUNT_NAME = os.getenv('STORAGE_ACCOUNT_NAME')
+STORAGE_ACCOUNT_KEY = os.getenv('STORAGE_ACCOUNT_KEY')
+CONTAINER_NAME = 'cloud'
 
 # Animal emojis mapping
 animal_emojis = {
@@ -42,14 +43,14 @@ def get_screen_width():
     """
     components.html(js, height=0, width=0)
 
-# Define your functions and classes below
+# Azure Blob Storage utility functions
 def get_blob_service_client(account_name, account_key):
     return BlobServiceClient(
         account_url=f"https://{account_name}.blob.core.windows.net",
         credential=account_key
     )
 
-def get_latest_blob_names(account_name, account_key, container_name, prefix, count=5):
+def get_latest_blob_names(account_name, account_key, container_name, prefix, count=10):
     blob_service_client = get_blob_service_client(account_name, account_key)
     container_client = blob_service_client.get_container_client(container_name)
     blobs = sorted(
@@ -79,34 +80,22 @@ def get_sensor_data_from_blobs(account_name, account_key, container_name, blob_n
         data_frames.append(df)
     return pd.concat(data_frames, ignore_index=True)
 
+# Image processing functions
 def local_image_to_data_url(image):
     img_byte_arr = io.BytesIO()
-    try:
-        image.save(img_byte_arr, format=image.format)
-    except Exception as e:
-        st.error(f"Error saving image: {e}")
-        return None
+    image.save(img_byte_arr, format=image.format)
     img_byte_arr.seek(0)
-    try:
-        encoded_string = base64.b64encode(img_byte_arr.getvalue()).decode("utf-8")
-    except Exception as e:
-        st.error(f"Error encoding image to base64: {e}")
-        return None
+    encoded_string = base64.b64encode(img_byte_arr.getvalue()).decode("utf-8")
     mime_type = image.format.lower()
     return f"data:image/{mime_type};base64,{encoded_string}"
 
 def process_analysis_text(text):
-    st.write("Processing Text: ", text)
     pattern = re.compile(r"\d+\.\s+(\w+)\s+-\s+(\d+)%")
     matches = pattern.findall(text)
-    st.write("Matches Found: ", matches)
     return [(match[0], int(match[1])) for match in matches]
 
 def submit_analysis(image):
     image_url = local_image_to_data_url(image)
-    if image_url is None:
-        st.error("Failed to convert image to data URL.")
-        return
     input_data = {
         "image": image_url,
         "prompt": "What are the top 5 animals this cloud looks like, with confidence scores in percentage? Please only give me the top 5 animals and their confidence scores in percentage. No other description!",
@@ -117,11 +106,8 @@ def submit_analysis(image):
             input=input_data,
         )
         output = list(output_generator)
-        st.write("Debug: ", output)
         analysis_text = " ".join(output)
-        st.write("Analysis Text: ", analysis_text)
         extracted_results = process_analysis_text(analysis_text)
-        st.write("Extracted Results: ", extracted_results)
         if not extracted_results:
             extracted_results = [("Unknown", 0)] * 5
         st.session_state["extracted_results"] = extracted_results
@@ -129,8 +115,8 @@ def submit_analysis(image):
         st.experimental_rerun()
     except Exception as e:
         st.error(f"An error occurred: {e}")
-        st.write("Unable to generate the riddle. Please check your Replicate credentials.")
 
+# Function to extract metadata from blob
 def get_blob_metadata(account_name, account_key, container_name, blob_name):
     blob_service_client = get_blob_service_client(account_name, account_key)
     blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
@@ -140,11 +126,27 @@ def get_blob_metadata(account_name, account_key, container_name, blob_name):
     location = metadata.get('location', 'Unknown location')
     return {'time_taken': time_taken, 'location': location}
 
+def extract_datetime_from_filename(filename):
+    timestamp_str = filename.split('_')[1].split('.')[0]
+    try:
+        dt = datetime.strptime(timestamp_str, '%Y%m%d%H%M%S')
+    except ValueError:
+        dt = datetime.strptime(timestamp_str, '%Y%m%d')
+    return dt.strftime('%Y-%m-%d %H:%M:%S') if 'H' in dt.strftime('%Y-%m-%d %H:%M:%S') else dt.strftime('%Y-%m-%d')
+
+def create_gif(image_list, output_path, duration=0.5):
+    images = []
+    for img_path in image_list:
+        with Image.open(img_path) as img:
+            images.append(img.copy())
+    imageio.mimsave(output_path, images, duration=duration, loop=0)
+
+def load_css(file_name):
+    with open(file_name) as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
 class CloudRiddleApp(HydraHeadApp):
     def run(self):
-        with open("style.css") as f:
-            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-
         if "page" not in st.session_state:
             st.session_state["page"] = "Landing Page"
             st.toast("A new cloud is available ☁️")
@@ -219,107 +221,69 @@ class CloudRiddleApp(HydraHeadApp):
 
 class TimeLapseApp(HydraHeadApp):
     def run(self):
-        with open("style.css") as f:
-            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-        st.title("Time-Lapse Photography")
-
-        # Call to set the screen width in session state
-        get_screen_width()
-
-        # Check if image details are being shown
-        if "show_details" not in st.session_state:
-            st.session_state["show_details"] = False
-            st.session_state["selected_image"] = None
-
-        if not st.session_state["show_details"]:
-            # Fetch the latest images
-            latest_images = get_latest_blob_names(
-                STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY, CONTAINER_NAME, 'photo_', count=10
-            )
-
-            # Create a temporary directory if it doesn't exist
-            temp_dir = "tempDir"
-            if not os.path.exists(temp_dir):
-                os.makedirs(temp_dir)
-
-            # Save the images to the temporary directory
-            image_paths = []
-            for image_name in latest_images:
-                image = get_image_from_blob(
-                    STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY, CONTAINER_NAME, image_name
-                )
-                image_path = os.path.join(temp_dir, image_name)
-                image.save(image_path)
-                image_paths.append(image_path)
-
-            # Create and display the GIF
-            if len(image_paths) > 1:
-                output_gif_path = os.path.join(temp_dir, "time_lapse.gif")
-                create_gif(image_paths, output_gif_path, duration=1.0)
-                
-                # Encode GIF to base64
-                with open(output_gif_path, "rb") as f:
-                    gif_data = f.read()
-                b64_gif = base64.b64encode(gif_data).decode("utf-8")
-                
-                st.markdown(
-                    f'<img src="data:image/gif;base64,{b64_gif}" alt="time-lapse gif" width="800">',
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.error("Not enough images to create a GIF")
-
-            # Display the static images
-            cols_per_row = 3 if st.session_state.get("screen_width", 800) >= 800 else 2
-            cols = st.columns(cols_per_row)
-            for index, image_name in enumerate(latest_images):
-                col = cols[index % cols_per_row]
-                with col:
-                    image = get_image_from_blob(
-                        STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY, CONTAINER_NAME, image_name
-                    )
-                    st.image(image, caption=f'Image {index+1}', width=100)
-                    if st.button(f"View Details {index+1}", key=f'detail-{index+1}'):
-                        st.session_state["selected_image"] = image_name
-                        st.session_state["show_details"] = True
-                        st.experimental_rerun()
+        if st.session_state.get("page") == "Image Details":
+            self.display_image_details()
         else:
-            image_name = st.session_state["selected_image"]
-            metadata = get_blob_metadata(STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY, CONTAINER_NAME, image_name)
-            image = get_image_from_blob(STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY, CONTAINER_NAME, image_name)
-            st.image(image, caption="Detailed View", use_column_width=True)
-            
-            # Use the new function to get the date and time from the filename
-            date_time_taken = extract_datetime_from_filename(image_name)
-            st.write(f"Time Taken: {date_time_taken}")
-            
-            if st.button("Back to album"):
-                st.session_state["show_details"] = False
-                st.session_state["selected_image"] = None
-                st.experimental_rerun()
+            self.display_time_lapse()
 
-def extract_datetime_from_filename(filename):
-    # Extract the timestamp part from the filename which seems to be in 'yyyyMMdd' or 'yyyyMMdd_HHmmss' format
-    timestamp_str = filename.split('_')[1].split('.')[0]
+    def display_time_lapse(self):
+        st.title("Time-Lapse Photography")
+        
+        temp_dir = "tempDir"
+        if not os.path.exists(temp_dir):
+            os.makedirs(temp_dir)
 
-    try:
-        # Try to parse with time information first
-        dt = datetime.strptime(timestamp_str, '%Y%m%d%H%M%S')
-    except ValueError:
-        # If fails, try to parse without time information
-        dt = datetime.strptime(timestamp_str, '%Y%m%d')
+        latest_images = get_latest_blob_names(STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY, CONTAINER_NAME, 'photo_', count=10)
+        image_paths = [os.path.join(temp_dir, img_name) for img_name in latest_images]
 
-    # Convert to a more readable format
-    return dt.strftime('%Y-%m-%d %H:%M:%S') if 'H' in dt.strftime('%Y-%m-%d %H:%M:%S') else dt.strftime('%Y-%m-%d')
+        for img_name in latest_images:
+            image = get_image_from_blob(STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY, CONTAINER_NAME, img_name)
+            image_path = os.path.join(temp_dir, img_name)
+            image.save(image_path)
+        
+        gif_path = os.path.join(temp_dir, "time_lapse.gif")
+        create_gif(image_paths, gif_path)
+        
+        col1, col2 = st.columns([3, 2])
+        with col1:
+            # Use HTML to ensure the GIF plays
+            gif_html = f'<img src="data:image/gif;base64,{base64.b64encode(open(gif_path, "rb").read()).decode()}" width="100%">'
+            st.markdown(gif_html, unsafe_allow_html=True)
 
-def create_gif(image_list, output_path, duration=0.5):
-    images = []
-    for img_path in image_list:
-        with Image.open(img_path) as img:
-            images.append(img.copy())  # Ensure the image is fully loaded
-    imageio.mimsave(output_path, images, duration=duration, loop=0)  # Set loop to 0 for infinite loop
+        with col2:
+            col2a, col2b = st.columns(2)
+            for i, img_path in enumerate(image_paths):
+                if i < 5:
+                    with col2a:
+                        st.image(img_path, width=100, caption=f"Image {i + 1}")
+                        if st.button(f"View Details {i + 1}", key=f'detail-{i + 1}'):
+                            st.session_state["selected_image"] = img_path
+                            st.session_state["selected_image_name"] = img_name
+                            st.session_state["page"] = "Image Details"
+                            st.experimental_rerun()
+                else:
+                    with col2b:
+                        st.image(img_path, width=100, caption=f"Image {i + 6}")
+                        if st.button(f"View Details {i + 6}", key=f'detail-{i + 6}'):
+                            st.session_state["selected_image"] = img_path
+                            st.session_state["selected_image_name"] = img_name
+                            st.session_state["page"] = "Image Details"
+                            st.experimental_rerun()
 
-# Ensure the remaining part of your app initialization remains the same
+    def display_image_details(self):
+        st.title("Image Details")
+        
+        image_path = st.session_state["selected_image"]
+        image_name = st.session_state["selected_image_name"]
+        st.image(image_path, caption="Selected Image", use_column_width=True)
+        shot_time = extract_datetime_from_filename(image_name)
+        st.write(f"Shot Time: {shot_time}")
+        
+        if st.button("Back to Album"):
+            st.session_state["page"] = "Time-Lapse"
+            st.experimental_rerun()
+
+# Main function to run the app
 if __name__ == "__main__":
     app = HydraApp(
         title="Cloud Riddle and Time-Lapse",
