@@ -258,15 +258,15 @@ class TimeLapseApp(HydraHeadApp):
                         st.image(img_path, width=100, caption=f"Image {i + 1}")
                         if st.button(f"View Details {i + 1}", key=f'detail-{i + 1}'):
                             st.session_state["selected_image"] = img_path
-                            st.session_state["selected_image_name"] = img_name
+                            st.session_state["selected_image_name"] = latest_images[i]
                             st.session_state["page"] = "Image Details"
                             st.experimental_rerun()
                 else:
                     with col2b:
-                        st.image(img_path, width=100, caption=f"Image {i + 6}")
-                        if st.button(f"View Details {i + 6}", key=f'detail-{i + 6}'):
+                        st.image(img_path, width=100, caption=f"Image {i + 1}")
+                        if st.button(f"View Details {i + 1}", key=f'detail-{i + 1}'):
                             st.session_state["selected_image"] = img_path
-                            st.session_state["selected_image_name"] = img_name
+                            st.session_state["selected_image_name"] = latest_images[i]
                             st.session_state["page"] = "Image Details"
                             st.experimental_rerun()
 
