@@ -16,7 +16,7 @@ import os  # Add this line to import the os module
 import pytz  # This module helps with timezone conversions
 import imageio  # Add this line to import the imageio library
 
-## Load environment variables
+### Load environment variables
 load_dotenv()
 
 # Azure Blob Storage credentials
